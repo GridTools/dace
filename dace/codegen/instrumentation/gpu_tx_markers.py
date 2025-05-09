@@ -1,4 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+import os
+
 from dace import dtypes, registry
 from dace.codegen import common
 from dace.codegen.prettycode import CodeIOStream
@@ -12,6 +14,14 @@ class GPUTXMarkersProvider(InstrumentationProvider):
 
     def __init__(self):
         self.backend = common.get_gpu_backend()
+        # Check if ROCm TX libraries and headers are available
+        rocm_path = os.getenv('ROCM_PATH', '/opt/rocm')
+        roctx_header_paths = [
+            os.path.join(rocm_path, 'roctracer/include/roctx.h'),
+            os.path.join(rocm_path, 'include/roctracer/roctx.h')
+        ]
+        roctx_library_path = os.path.join(rocm_path, 'lib', 'libroctx64.so')
+        self.enable_rocTX = any(os.path.isfile(path) for path in roctx_header_paths) and os.path.isfile(roctx_library_path)
         super().__init__()
 
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream, codegen) -> None:
@@ -21,9 +31,9 @@ class GPUTXMarkersProvider(InstrumentationProvider):
                 sdfg.append_global_code('#include <nvtx3/nvToolsExt.h>', 'frame')
                 local_stream.write(f'nvtxRangePush("{sdfg.name}");')
             elif self.backend == 'hip':
-                # TODO(iomaganaris): Add support for rocTX for AMD GPUs once I find a way to test ROCm 6.4 as earlier
-                # versions of rocTX are deprecated and distributed in a different way
-                pass
+                if self.enable_rocTX:
+                    sdfg.append_global_code('#include <roctx.h>', 'frame')
+                    local_stream.write(f'roctxRangePush("{sdfg.name}");')
             else:
                 raise NameError('GPU backend "%s" not recognized' % self.backend)
 
@@ -33,8 +43,7 @@ class GPUTXMarkersProvider(InstrumentationProvider):
             if self.backend == 'cuda':
                 local_stream.write('nvtxRangePop();')
             elif self.backend == 'hip':
-                # TODO(iomaganaris): Add support for rocTX for AMD GPUs once I find a way to test ROCm 6.4 as earlier
-                # versions of rocTX are deprecated and distributed in a different way
-                pass
+                if self.enable_rocTX:
+                    local_stream.write('roctxRangePop();')
             else:
                 raise NameError('GPU backend "%s" not recognized' % self.backend)
