@@ -380,7 +380,8 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
 
     // Create {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
-        DACE_GPU_CHECK({backend}StreamCreateWithFlags(&__state->gpu_context->internal_streams[i], {backend}StreamNonBlocking));
+        // DACE_GPU_CHECK({backend}StreamCreateWithFlags(&__state->gpu_context->internal_streams[i], {backend}StreamNonBlocking));
+        __state->gpu_context->internal_streams[i] = nullptr; // Default stream
         __state->gpu_context->streams[i] = __state->gpu_context->internal_streams[i]; // Allow for externals to modify streams
     }}
     for(int i = 0; i < {nevents}; ++i) {{
@@ -397,8 +398,8 @@ int __dace_exit_cuda({sdfg_state_name} *__state) {{
 
     // Synchronize and check for CUDA errors
     int __err = static_cast<int>(__state->gpu_context->lasterror);
-    if (__err == 0)
-        __err = static_cast<int>({backend}DeviceSynchronize());
+    // if (__err == 0)
+    //    __err = static_cast<int>({backend}DeviceSynchronize());
 
     // Destroy {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
