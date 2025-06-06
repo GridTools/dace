@@ -211,6 +211,9 @@ class CUDACodeGen(TargetCodeGenerator):
                     except ValueError:  # If transformation doesn't match, continue normally
                         continue
 
+                    else:
+                        raise RuntimeError("Detected the promotion of Memlet '{e}' to a Map inside the code generator.")
+
         # Annotate CUDA streams and events
         self._cuda_streams, self._cuda_events = self._compute_cudastreams(sdfg)
 
