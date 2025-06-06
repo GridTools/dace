@@ -71,6 +71,7 @@ class CopyToMap(xf.SingleStateTransformation):
         return subsets.Range([(ind, ind, 1) for ind in cur_index])
 
     def apply(self, state: SDFGState, sdfg: SDFG):
+
         avnode = self.a
         av = avnode.data
         adesc = avnode.desc(sdfg)
