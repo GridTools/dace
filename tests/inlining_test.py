@@ -2,7 +2,7 @@
 import dace
 from dace import nodes as dace_nodes
 from dace.sdfg.state import FunctionCallRegion, NamedRegion
-from dace.transformation.interstate import InlineSDFG, StateFusion
+from dace.transformation.interstate import InlineSDFG, InlineMultistateSDFG, StateFusion
 from dace.libraries import blas
 from dace.library import change_default
 from typing import Tuple
@@ -625,6 +625,100 @@ def test_inlining_view_input():
     np.testing.assert_allclose(expected, actual)
 
 
+def test_inline_symbol_remap():
+    nsdfg = dace.SDFG('inner')
+    nsdfg.add_array('a', [20, dace.symbolic.pystr_to_symbolic('n_lev')], dace.float64)
+    # nsdfg.add_symbol('n_lev', dace.int32)
+    nsdfg.add_array('atmp', [20, dace.symbolic.pystr_to_symbolic('n_lev')], dace.float64, transient=True)
+    nstate = nsdfg.add_state()
+    nsdfg.add_scalar('n_lev_scalar', dace.int32)
+    nstate_before = nsdfg.add_state_before(nstate, assignments={})
+    nstate_before_before = nsdfg.add_state_before(nstate_before, assignments={'n_lev': 'n_lev_scalar'})
+    atmp = nstate.add_access('atmp')
+    nstate.add_mapped_tasklet('doit', {'l': '0:20', 'k': '0:n_lev'}, {},
+                              '''if k < j:
+    o = 2.0''', {'o': dace.Memlet('atmp[l, k]', dynamic=True)},
+                              external_edges=True, output_nodes={atmp})
+    nstate.add_nedge(atmp, nstate.add_access('a'), dace.Memlet('atmp[0:20, 0:n_lev] -> a[0:20, 0:n_lev]'))
+    sdfg = dace.SDFG('outer_tmp')
+    sdfg.add_array('A', [20, dace.symbolic.pystr_to_symbolic('n_lev')], dace.float64)
+    sdfg.add_symbol('i', dace.int32)
+    # sdfg.add_symbol('n_lev', dace.int32)
+    state = sdfg.add_state()
+    w = state.add_write('A')
+    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'n_lev_scalar'}, {'a'}, {'j': 'min(i, 10)'})
+    state.add_edge(nsdfg_node, 'a', w, None, dace.Memlet('A'))
+    tasklet = state.add_tasklet('set_n_lel', code='n_lev_ = 20', outputs={'n_lev_'}, inputs={})
+    sdfg.add_scalar('n_lev_scalar_outside', dace.int32, transient=True)
+    n_lev_scalar_access = state.add_access('n_lev_scalar_outside')
+    state.add_edge(tasklet, 'n_lev_', n_lev_scalar_access, None, dace.Memlet('n_lev_scalar_outside'))
+    state.add_edge(n_lev_scalar_access, None, nsdfg_node, 'n_lev_scalar', dace.Memlet('n_lev_scalar_outside'))
+
+    # Verify that compilation works before inlining
+    sdfg.compile()
+
+    sdfg.save('inline_symbol_remap.sdfg')
+
+    sdfg.apply_transformations(InlineMultistateSDFG)
+    
+    sdfg.save('inline_symbol_remap_inlined.sdfg')
+    csdfg = sdfg.compile()
+    print(csdfg.filename)
+
+    # Compile and run
+    a = np.zeros((20, 20), dtype=np.float64)
+    csdfg(A=a, i=15)
+    assert np.allclose(a[:10], 2.0)
+    assert not np.allclose(a[10:], 2.0)
+
+def test_inline_symbol_compilation_crashes():
+    nsdfg = dace.SDFG('inner')
+    nsdfg.add_array('a', [20, dace.symbolic.pystr_to_symbolic('n_lev')], dace.float64)
+    # nsdfg.add_symbol('n_lev', dace.int32)
+    nsdfg.add_array('atmp', [20, dace.symbolic.pystr_to_symbolic('n_lev')], dace.float64, transient=True)
+    nstate = nsdfg.add_state()
+    nsdfg.add_scalar('n_lev_scalar', dace.int32)
+    nstate_before = nsdfg.add_state_before(nstate, assignments={})
+    nstate_before_before = nsdfg.add_state_before(nstate_before, assignments={'n_lev': 'n_lev_scalar'})
+    atmp = nstate.add_access('atmp')
+    nstate.add_mapped_tasklet('doit', {'l': '0:20', 'k': '0:n_lev'}, {},
+                              '''if k < j:
+    o = 2.0''', {'o': dace.Memlet('atmp[l, k]', dynamic=True)},
+                              external_edges=True, output_nodes={atmp})
+    nstate_after = nsdfg.add_state_after(nstate)
+    nstate_after.add_nedge(nstate_after.add_access('atmp'), nstate_after.add_access('a'), dace.Memlet('atmp[0:20, 0:n_lev] -> a[0:20, 0:n_lev]'))
+    sdfg = dace.SDFG('outer_tmp')
+    sdfg.add_array('A', [20, dace.symbolic.pystr_to_symbolic('n_lev')], dace.float64)
+    sdfg.add_symbol('i', dace.int32)
+    # sdfg.add_symbol('n_lev', dace.int32)
+    state = sdfg.add_state()
+    w = state.add_write('A')
+    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'n_lev_scalar'}, {'a'}, {'j': 'min(i, 10)'})
+    state.add_edge(nsdfg_node, 'a', w, None, dace.Memlet('A'))
+    tasklet = state.add_tasklet('set_n_lel', code='n_lev_ = 20', outputs={'n_lev_'}, inputs={})
+    sdfg.add_scalar('n_lev_scalar_outside', dace.int32, transient=True)
+    n_lev_scalar_access = state.add_access('n_lev_scalar_outside')
+    state.add_edge(tasklet, 'n_lev_', n_lev_scalar_access, None, dace.Memlet('n_lev_scalar_outside'))
+    state.add_edge(n_lev_scalar_access, None, nsdfg_node, 'n_lev_scalar', dace.Memlet('n_lev_scalar_outside'))
+
+    # Verify that compilation works before inlining
+    sdfg.compile()
+
+    sdfg.save('inline_symbol_remap.sdfg')
+
+    sdfg.apply_transformations(InlineMultistateSDFG)
+    
+    sdfg.save('inline_symbol_remap_inlined.sdfg')
+    csdfg = sdfg.compile()
+    print(csdfg.filename)
+
+    # Compile and run
+    a = np.zeros((20, 20), dtype=np.float64)
+    csdfg(A=a, i=15)
+    assert np.allclose(a[:10], 2.0)
+    assert not np.allclose(a[10:], 2.0)
+
+
 if __name__ == "__main__":
     test()
     # Skipped due to bug that cannot be reproduced outside CI
@@ -645,3 +739,5 @@ if __name__ == "__main__":
     test_chain_reduction_1()
     test_chain_reduction_2()
     test_chain_reduction_all()
+    test_inline_symbol_remap()
+    test_inline_symbol_compilation_crashes()
