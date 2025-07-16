@@ -96,7 +96,7 @@ required:
 
             match_exception:
                 type: bool
-                default: false
+                default: true
                 title: Treat exceptions in "can_be_applied" as errors
                 description: >
                     When an exception is raised in a transformation "can_be_applied"
@@ -303,7 +303,7 @@ required:
                         type: str
                         title: nvcc Arguments
                         description: Compiler argument flags for CUDA
-                        default: '-Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
+                        default: '--generate-line-info -Xcompiler -march=native -Xcompiler -Wno-unused-parameter'
                         default_Windows: '-O3 --use_fast_math'
 
                     hip_args:
@@ -450,7 +450,7 @@ required:
                     allow_implicit_memlet_to_map:
                         type: bool
                         title: Allow the implicit conversion of Memlets to Maps during code generation.
-                        default: true
+                        default: false
                         description: >
                             If ``true`` the code generator will implicitly convert Memlets that cannot be
                             represented by a native library call, such as ``cudaMemcpy()`` into Maps that
