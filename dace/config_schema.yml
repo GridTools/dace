@@ -319,7 +319,7 @@ required:
                             Additional CUDA architectures (separated by commas)
                             to compile GPU code for, excluding the current
                             architecture on the compiling machine.
-                        default: '60,80,90'
+                        default: '60'
 
                     hip_arch:
                         type: str
