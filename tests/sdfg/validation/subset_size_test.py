@@ -19,7 +19,6 @@ def _make_sdfg_with_zero_sized_an_to_an_memlet() -> Tuple[dace.SDFG, dace.SDFGSt
             name=name,
             shape=(20, 20),
             dtype=dace.float64,
-            transient=True,
         )
 
     state.add_nedge(
@@ -67,7 +66,6 @@ def test_an_to_an_memlet_with_negative_size():
             name=name,
             shape=(20, 20),
             dtype=dace.float64,
-            transient=True,
         )
 
     state.add_nedge(

@@ -574,8 +574,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                       # Streams do not need to be initialized
                       and not isinstance(arr, dt.Stream)):
                     if node.setzero == False:
-                        warnings.warn('WARNING: Use of uninitialized transient "%s" in state "%s"' %
-                                      (node.data, state.label))
+                        raise InvalidSDFGError(
+                            'Use of uninitialized transient "%s" in state "%s"' % (node.data, state.label), sdfg,
+                            state_id)
 
                 # Register initialized transients
                 if arr.transient and state.in_degree(node) > 0:
@@ -631,11 +632,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups), sdfg, state_id, nid)
 
             for conn in node.in_connectors.keys() | node.out_connectors.keys():
-                if conn in (sdfg.constants_prop.keys() | sdfg.symbols.keys() | sdfg.arrays.keys()):
+                if conn in (sdfg.constants_prop.keys() | sdfg.symbols.keys()):
                     if not isinstance(node, nd.EntryNode):  # Special case for dynamic map inputs
                         raise InvalidSDFGNodeError(
-                            "Connector name '%s' is already used as a symbol, constant, or array name" % conn, sdfg,
-                            state_id, nid)
+                            "Connector name '%s' is already used as a symbol or constant" % conn, sdfg, state_id, nid)
 
         # Check for dangling connectors (incoming)
         for conn in node.in_connectors:
