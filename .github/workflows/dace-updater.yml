@@ -2,7 +2,6 @@ name: Inform the Python package index about a new DaCe release
 # Must be installed into the DaCe fork.
 
 on:
-  workflow_dispatch:
   #push:
     # Only run once a new tag has been created.
     # TODO: Make sure that the tag is passed to the index update workflow.
@@ -12,6 +11,9 @@ on:
   # We need this until this file is not in `main`, without it the web interface will not pick it up.
   #  See https://stackoverflow.com/a/71057825
   pull_request:
+
+  # For some reasons this does not work, so it can not be triggered manually.
+  workflow_dispatch:
 
 jobs:
   update-dace:
@@ -25,10 +27,10 @@ jobs:
           INDEX_ORGANIZATION="philip-paul-mueller"
           INDEX_REPO="test_package_index"
 
-          # We use `github.ref_name` here because we only run for a tag and they should be unique.
-          # If we would use `github.ref` then we would have `refs/tags/<tag_name>`. An alternative
-          # would also be `github.sha`.
-          DEPENDENCY_REF="${{ github.ref_name }}"
+          # We are using `github.sha` here to be sure that we transmit an identifier to the index
+          #  that can be checked out. Before we used `github.ref_name` but got strange results
+          #  with it.
+          DEPENDENCY_REF="${{ github.sha }}"
           SOURCE_REPO="dace"
           SOURCE_OWNER="gridtools"
 
