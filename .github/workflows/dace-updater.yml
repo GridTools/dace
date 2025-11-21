@@ -11,7 +11,7 @@ on:
 
   # We need this until this file is not in `main`, without it the web interface will not pick it up.
   #  See https://stackoverflow.com/a/71057825
-  #pull_request:
+  pull_request:
 
 jobs:
   update-dace:
