@@ -12,7 +12,7 @@ on:
 
   # Define this to ensure that it runs and is visible in the settings.
   #  See https://stackoverflow.com/a/71057825
-  #pull_request:
+  pull_request:
 
   # According to the [documentation](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow#configuring-a-workflow-to-run-manually)
   # it is only possible to trigger a workflow manually, if it is located in the default branch.
