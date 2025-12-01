@@ -1,0 +1,45 @@
+name: Inform the Python package index about a new DaCe release.
+
+on:
+  # According to the [documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#push)
+  # this event will trigger even when the workflow file is not located on the default branch.
+  push:
+    # Only run once a new tag has been created.
+    #  For testing purposes we do not use the normal tag names.
+    #- __phimuell_deployment_test_*
+    tags:
+      - __phimuell_deployment_test_*
+
+  # Define this to ensure that it runs and is visible in the settings.
+  #  See https://stackoverflow.com/a/71057825
+  #pull_request:
+
+  # According to the [documentation](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow#configuring-a-workflow-to-run-manually)
+  # it is only possible to trigger a workflow manually, if it is located in the default branch.
+  workflow_dispatch:
+
+jobs:
+  update-dace:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inform Index
+        shell: bash
+        run: |
+          # Using the test thing.
+          INDEX_ORGANIZATION="philip-paul-mueller"
+          INDEX_REPO="test_package_index"
+
+          # We are using `github.sha` here to be sure that we transmit an identifier to the index
+          #  that can be checked out. Before we used `github.ref_name` but got strange results
+          #  with it.
+          DEPENDENCY_REF="${{ github.sha }}"
+          SOURCE_REPO="dace"
+          SOURCE_OWNER="gridtools"
+
+          curl -L -v \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.PKG_UPDATE_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${INDEX_ORGANIZATION}/${INDEX_REPO}/dispatches" \
+            -d '{"event_type":"update_package_index","client_payload":{"source_repo":"'"${SOURCE_REPO}"'","source_org":"'"${SOURCE_OWNER}"'","dependency_ref":"'"${DEPENDENCY_REF}"'"}}'
