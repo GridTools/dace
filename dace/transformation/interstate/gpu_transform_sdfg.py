@@ -24,6 +24,10 @@ def _recursive_out_check(node, state, gpu_scalars):
     scalout = True
     sdfg = state.parent
     for e in state.out_edges(node):
+        # If destination is an entry node (map) then we shouldn't care if the output is scalar or not because
+        # it will be passed as an argument to the map.
+        if isinstance(e.dst, nodes.EntryNode):
+            continue
         last_edge = state.memlet_path(e)[-1]
         if isinstance(last_edge.dst, nodes.AccessNode):
             desc = sdfg.arrays[last_edge.dst.data]
