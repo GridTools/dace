@@ -1,21 +1,18 @@
 name: Inform the Python package index about a new DaCe release.
 
 on:
-  # According to the [documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#push)
-  # this event will trigger even when the workflow file is not located on the default branch.
+  # Trigger for all pushes to tags matching this pattern
   push:
-    # Only run once a new tag has been created.
-    #  For testing purposes we do not use the normal tag names.
-    #- __phimuell_deployment_test_*
     tags:
-      - __phimuell_deployment_test_*
+      - __gt4py-next-integration_*
 
-  # Define this to ensure that it runs and is visible in the settings.
+  # To "install" this workflow you must enable this trigger, such that the workflow runs at least one.
+  #  You should also disable any processing such that no commit in the index repo is performed.
   #  See https://stackoverflow.com/a/71057825
   #pull_request:
 
-  # According to the [documentation](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow#configuring-a-workflow-to-run-manually)
-  # it is only possible to trigger a workflow manually, if it is located in the default branch.
+  # Allows to trigger the update manually.
+  # NOTE: Is only possible if the workflow file is located on the default and the branch where it should run on.
   workflow_dispatch:
 
 jobs:
@@ -25,9 +22,8 @@ jobs:
       - name: Inform Index
         shell: bash
         run: |
-          # Using the test thing.
-          INDEX_ORGANIZATION="philip-paul-mueller"
-          INDEX_REPO="test_package_index"
+          INDEX_ORGANIZATION="gridtools"
+          INDEX_REPO="python-pkg-index"
 
           # We are using `github.sha` here to be sure that we transmit an identifier to the index
           #  that can be checked out. Before we used `github.ref_name` but got strange results
