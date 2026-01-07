@@ -23,7 +23,7 @@ jobs:
         shell: bash
         run: |
           INDEX_ORGANIZATION="gridtools"
-          INDEX_REPO="python-pkg-index"
+          INDEX_REPO="pypi"
 
           # We are using `github.sha` here to be sure that we transmit an identifier to the index
           #  that can be checked out. Before we used `github.ref_name` but got strange results
