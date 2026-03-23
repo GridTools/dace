@@ -500,7 +500,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         :param simplify: Whether to apply simplification pass or not (None
                        uses configuration-defined value).
         :param save: If True, saves the generated SDFG to
-                    ``_dacegraphs/program.sdfg`` after parsing.
+                    ``_dacegraphs/program.sdfgz`` after parsing.
         :param validate: If True, validates the resulting SDFG after creation.
         :return: The generated SDFG object.
         """
@@ -523,7 +523,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Save the SDFG. Skip this step if running from a cached SDFG, as
         # it might overwrite the cached SDFG.
         if not cached and not Config.get_bool('compiler', 'use_cache') and save:
-            sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
+            sdfg.save(os.path.join('_dacegraphs', 'program.sdfgz'), compress=True)
 
         # Validate SDFG
         if validate:
@@ -802,13 +802,13 @@ class DaceProgram(pycommon.SDFGConvertible):
         function is called.
 
         :param path: Path to SDFG build folder (e.g., ".dacecache/program").
-                     Path has to include ``program.sdfg`` and the binary shared
+                     Path has to include ``program.sdfgz`` and the binary shared
                      object under the ``build`` folder.
         :param args: Optional compile-time arguments.
         :param kwargs: Optional compile-time keyword arguments.
         """
         from dace.sdfg import utils as sdutil  # Avoid import loop
-        csdfg = sdutil.load_precompiled_sdfg(path, self.argnames)
+        csdfg = sdutil.load_precompiled_sdfg(path)
         _, cachekey = self._load_sdfg(None, *args, **kwargs)
 
         # Update SDFG cache with the SDFG and compiled version
@@ -909,7 +909,12 @@ class DaceProgram(pycommon.SDFGConvertible):
         # If recreate flag is False, check and load from cache
         if not self.recreate_sdfg:
             build_folder = SDFG(self.name).build_folder
-            sdfg, _ = self.load_sdfg(os.path.join(build_folder, 'program.sdfg'), *args, **kwargs)
+            sdfg, _ = self.load_sdfg(os.path.join(build_folder, 'program.sdfgz'), *args, **kwargs)
+
+            if sdfg is None:
+                # attempt to load uncompressed sdfg (backwards compatibility)
+                sdfg, _ = self.load_sdfg(os.path.join(build_folder, 'program.sdfg'), *args, **kwargs)
+
             if sdfg is not None:
                 return sdfg, True
 
