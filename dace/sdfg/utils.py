@@ -2754,3 +2754,217 @@ def expand_nodes(sdfg: SDFG, predicate: Callable[[nd.Node], bool]):
 
         if expanded_something:
             states.append(state)
+
+
+def get_deterministic_node_key(graph: Any, node: Any, node_key_cache: Optional[Dict[int, tuple]] = None) -> tuple:
+    """
+    Generates a highly stable, deterministic key for DaCe graph nodes
+    based on their semantic properties rather than memory locations.
+
+    During SDFG compilation, relying on memory addresses or volatile UUIDs
+    for sorting leads to non-deterministic code generation. This function
+    extracts the intrinsic semantic identity of a node to ensure structural
+    collisions are resolved deterministically.
+
+    The generated key is a tuple of ``(node_type, label, dynamic_parts)``
+    which enforces lexicographic ordering: nodes are first grouped by type,
+    then by label, with the remaining semantic properties acting as a
+    tiebreaker.
+
+    The dynamic parts incorporate:
+        - Graph topology (in-degree and out-degree)
+        - Interface semantics (in/out connectors, always included for
+          ``nd.Node`` subclasses even when empty)
+        - Loop and memory semantics (map parameters, ranges, schedules)
+        - Internal code logic (Tasklet code string)
+        - Nested SDFG structural size and symbol mapping
+
+    When called from the sorting path, an optional ``node_key_cache`` dict
+    can be provided to avoid redundant recomputation during sort comparisons.
+    The cache is private to each ``sort_sdfg_alphabetically()`` invocation
+    and lives on the stack, so concurrent SDFG processing is safe.
+
+    :param graph: The containing graph (e.g., SDFGState or ControlFlowRegion)
+                  used to compute in-degree and out-degree. May be ``None``,
+                  in which case degree information is omitted from the key.
+    :param node: The DaCe graph node (e.g., Tasklet, AccessNode, MapEntry)
+                 to be evaluated.
+    :param node_key_cache: Optional node-key cache dict, private to the current
+                           ``sort_sdfg_alphabetically()`` call. When ``None``,
+                           no caching is performed.
+    :return: A tuple ``(node_type, label, dynamic_parts)`` representing
+             the node's semantic identity.
+    """
+    if node_key_cache is not None:
+        node_id = id(node)
+        if node_id in node_key_cache:
+            return node_key_cache[node_id]
+
+    node_type = type(node).__name__
+
+    # Extract core identifier
+    if hasattr(node, 'data'):
+        raw_label = node.data
+    elif hasattr(node, 'label'):
+        raw_label = node.label
+    else:
+        raw_label = str(node)
+
+    parts = []
+
+    # 1. Topological Context (requires the containing graph)
+    if graph is not None:
+        try:
+            in_deg = graph.in_degree(node)
+            out_deg = graph.out_degree(node)
+            parts.append(f"i{in_deg}o{out_deg}")
+        except (ValueError, KeyError):
+            # Node might not belong to this graph (e.g., during NX rebuild)
+            pass
+
+    # 2. Interface Semantics (Connectors)
+    if isinstance(node, nd.Node):
+        parts.append("inC:{" + "-".join(sorted(node.in_connectors.keys())) + "}")
+        parts.append("outC:{" + "-".join(sorted(node.out_connectors.keys())) + "}")
+
+    # 3. Map Semantics (Parameters, Ranges & Schedules)
+    if isinstance(node, (nd.MapEntry, nd.MapExit)):
+        parts.append("map:" + "-".join(node.map.params))
+        parts.append("range:" + str(node.map.range))
+        parts.append(f"sch:{str(node.map.schedule)}")
+
+    # 4. Internal Code Semantics (Tasklets)
+    if isinstance(node, nd.Tasklet):
+        code_str = str(node.code.as_string).strip()
+        parts.append(f"code:{code_str}")
+
+    # 5. Nested SDFG Differentiation
+    if isinstance(node, nd.NestedSDFG):
+        parts.append(f"nsdfg_states:{len(node.sdfg.nodes())}")
+        # Include symbol mapping for further differentiation
+        sorted_syms = dict(sorted({str(k): str(v) for k, v in node.symbol_mapping.items()}.items()))
+        parts.append(f"symmap:{sorted_syms}")
+
+    # Tuple enforces lexicographic order: group by type, then label,
+    # then use dynamic parts as a tiebreaker.
+    result = (node_type, str(raw_label), "_".join(parts))
+    if node_key_cache is not None:
+        node_key_cache[id(node)] = result
+    return result
+
+
+def get_deterministic_edge_key(graph: Any, edge: Any, node_key_cache: Optional[Dict[int, tuple]] = None) -> tuple:
+    """
+    Generates a highly stable key for graph edges to ensure
+    deterministic sorting.
+
+    This function extracts the semantic connection points (connectors)
+    and the data payload (Memlets or Interstate conditions) to prevent
+    non-deterministic compiler graph traversals.
+
+    For interstate edges, whose data object lacks a stable ``__str__()``
+    and would produce a memory-address-based representation, the function
+    extracts the ``condition`` and ``assignments`` attributes instead.
+
+    :param graph: The containing graph, passed through to
+                  :func:`get_deterministic_node_key` for degree computation.
+    :param edge: The DaCe graph edge (or InterstateEdge) to be evaluated.
+    :param node_key_cache: Optional node-key cache dict, passed through to
+                           :func:`get_deterministic_node_key`.
+    :return: A tuple representing the edge's routing and payload.
+    """
+    # 1. Extract connector strings
+    raw_src_conn = str(getattr(edge, 'src_conn', ''))
+    raw_dst_conn = str(getattr(edge, 'dst_conn', ''))
+
+    # 2. Extract data payload, handling InterstateEdge specially since it
+    #    lacks __str__() and would produce an unstable memory-address-based
+    #    representation.
+    edge_data = getattr(edge, 'data', '')
+    if hasattr(edge_data, 'condition') and hasattr(edge_data, 'assignments'):
+        cond_str = str(edge_data.condition)
+        sorted_assigns = dict(sorted({str(k): str(v) for k, v in edge_data.assignments.items()}.items()))
+        raw_data_str = f"cond:{cond_str}_assign:{sorted_assigns}"
+    else:
+        raw_data_str = str(edge_data)
+
+    # 3. Retrieve the stabilized keys for the source and destination nodes
+    src_key = get_deterministic_node_key(graph, edge.src, node_key_cache)
+    dst_key = get_deterministic_node_key(graph, edge.dst, node_key_cache)
+
+    return (src_key, raw_src_conn, dst_key, raw_dst_conn, raw_data_str)
+
+
+def sort_graph_dicts_alphabetically(graph: Union['ControlFlowRegion', 'SDFGState'],
+                                    rebuild_nx: bool = False,
+                                    node_key_cache: Optional[Dict[int, tuple]] = None) -> None:
+    """
+    Sorts internal graph nodes, edge dictionaries, and NetworkX backends in-place
+    using semantically-aware deterministic keys.
+
+    In DaCe, the order in which code is generated heavily depends on
+    the iteration order of the graph's internal dictionaries. This function performs
+    a deep, in-place sort of these structures to guarantee that graph traversal
+    and code generation are perfectly deterministic across different executions.
+
+    The stabilization process occurs in four phases:
+        1. Alphabetizes the master `_nodes` dictionary based on semantic node keys.
+        2. Alphabetizes the nested adjacency lists (`in_edges`, `out_edges`) for
+           every node based on semantic edge keys.
+        3. Alphabetizes the master `_edges` dictionary.
+        4. (Optional) Tears down and sequentially rebuilds the underlying NetworkX
+           graph (`_nx`) so its internal node/edge registries match the newly
+           stabilized order. Skipped by default since pattern matching builds
+           its own NetworkX digraph via collapse_multigraph_to_nx.
+
+    :param graph: The DaCe graph structure (e.g., SDFGState or ControlFlowRegion)
+                  whose internal dictionaries need to be stabilized.
+    :param rebuild_nx: If True, rebuilds the internal NetworkX graph to match
+                       the new order. Default is False for performance, since
+                       DaCe's codegen and pattern matching do not rely on the
+                       internal _nx iteration order.
+    :param node_key_cache: Optional node-key cache dict, private to the current
+                           ``sort_sdfg_alphabetically()`` call. Passed through to
+                           key functions to avoid redundant computation.
+    """
+    # 1. Sort the master Nodes dictionary
+    sorted_node_items = sorted(graph._nodes.items(),
+                               key=lambda item: get_deterministic_node_key(graph, item[0], node_key_cache))
+    graph._nodes.clear()
+    graph._nodes.update(sorted_node_items)
+
+    # 2. Sort the nested adjacency lists (In/Out Edges) within each node
+    for node, (in_edges, out_edges) in graph._nodes.items():
+        for edges in [in_edges, out_edges]:
+            sorted_edges = sorted(edges.items(),
+                                  key=lambda item: get_deterministic_edge_key(graph, item[1], node_key_cache))
+            edges.clear()
+            edges.update(sorted_edges)
+
+    # 3. Sort the master Edges dictionary
+    sorted_edge_items = sorted(graph._edges.items(),
+                               key=lambda item: get_deterministic_edge_key(graph, item[1], node_key_cache))
+    graph._edges.clear()
+    graph._edges.update(sorted_edge_items)
+
+    # 4. Optionally rebuild the NetworkX backend to match the new deterministic order
+    if rebuild_nx and hasattr(graph, '_nx'):
+        old_nx = graph._nx
+        graph._nx = type(old_nx)()
+
+        # Add nodes sequentially
+        for n in graph._nodes.keys():
+            graph._nx.add_node(n, **old_nx.nodes.get(n, {}))
+
+        # Add edges sequentially using the newly sorted master edge list
+        for e_obj in graph._edges.values():
+            edge_attrs = {'data': e_obj.data}
+
+            if hasattr(e_obj, 'src_conn'):
+                edge_attrs['src_conn'] = e_obj.src_conn
+                edge_attrs['dst_conn'] = e_obj.dst_conn
+
+            if hasattr(e_obj, 'key'):
+                graph._nx.add_edge(e_obj.src, e_obj.dst, key=e_obj.key, **edge_attrs)
+            else:
+                graph._nx.add_edge(e_obj.src, e_obj.dst, **edge_attrs)
