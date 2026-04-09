@@ -1730,7 +1730,7 @@ class SDFG(ControlFlowRegion):
 
     # Dynamic SDFG creation API
     ##############################
-
+    # TODO(tehrengruber): This could also be done using the counter.
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
 

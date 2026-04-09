@@ -8,6 +8,7 @@ This module provides general utility functions that are used across various part
 from typing import Iterable, Sequence, Union
 
 import sympy
+import inspect
 
 # Type alias for numeric or symbolic values
 NumericType = Union[int, float, sympy.Basic]
@@ -62,3 +63,13 @@ def until(val, substr):
     if substr not in val:
         return val
     return val[:val.find(substr)]
+
+def json_data_to_file(data, filename):
+    import json
+
+    with open(filename, "w") as f:
+        json.dump(data, f, indent=2)
+
+def print_sdfg_hash(sdfg: "dace.SDFG", frame_index=1, info="") -> None:
+    frame = inspect.stack()[frame_index]
+    print(f"[SDFG Hash] location: {frame.filename}:{frame.lineno} hash: {sdfg.hash_sdfg()}, info: {info}", flush=True)

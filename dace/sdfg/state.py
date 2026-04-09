@@ -11,6 +11,7 @@ import warnings
 import sympy
 from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Type,
                     Union, overload)
+from hashlib import sha256
 
 import dace
 from dace.frontend.python import astutils
@@ -31,6 +32,7 @@ from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
+import json
 
 if TYPE_CHECKING:
     import dace.sdfg.scope
@@ -235,6 +237,7 @@ class BlockGraphView(object):
         """
         return set()
 
+    # TODO(tehrengruber): should we make this an ordered set?
     @property
     def free_symbols(self) -> Set[str]:
         """
@@ -1390,6 +1393,52 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         self.location = location if location is not None else {}
         self._default_lineinfo = None
 
+    # TODO(tehrengruber): unify with sdfg.hash()
+    def hash_state(self, jsondict: Optional[Dict[str, Any]] = None) -> str:
+        """
+        Returns a hash of the current SDFG, without considering IDs and attribute names.
+
+        :param jsondict: If not None, uses given JSON dictionary as input.
+        :return: The hash (in SHA-256 format).
+        """
+
+        def keyword_remover(json_obj: Any, last_keyword=""):
+            # Makes non-unique in SDFG hierarchy v2
+            # Recursively remove attributes from the SDFG which are not used in
+            # uniquely representing the SDFG. This, among other things, includes
+            # the hash, name, transformation history, and meta attributes.
+            if isinstance(json_obj, dict):
+                if 'cfg_list_id' in json_obj:
+                    del json_obj['cfg_list_id']
+
+                keys_to_delete = []
+                kv_to_recurse = []
+                for key, value in json_obj.items():
+                    if (isinstance(key, str)
+                            and (key.startswith('_meta_')
+                                 or key in ['name', 'hash', 'orig_sdfg', 'transformation_hist', 'instrument', 'guid'])):
+                        keys_to_delete.append(key)
+                    else:
+                        kv_to_recurse.append((key, value))
+
+                for key in keys_to_delete:
+                    del json_obj[key]
+
+                for key, value in kv_to_recurse:
+                    keyword_remover(value, last_keyword=key)
+            elif isinstance(json_obj, (list, tuple)):
+                for value in json_obj:
+                    keyword_remover(value)
+
+        # Clean SDFG of nonstandard objects
+        jsondict = (json.loads(json.dumps(jsondict)) if jsondict is not None else self.to_json())
+
+        keyword_remover(jsondict)  # Make non-unique in SDFG hierarchy
+
+        string_representation = json.dumps(jsondict)  # dict->str
+        hsh = sha256(string_representation.encode('utf-8'))
+        return hsh.hexdigest()
+
     @property
     def parent(self):
         """ Returns the parent SDFG of this state. """
@@ -1750,9 +1799,13 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg.update_cfg_list([])
 
         # Make dictionary of autodetect connector types from set
-        if isinstance(inputs, (set, collections.abc.KeysView)):
+        # TODO(tehrengruber): Using sets here leads to a situation where self._nodes has a different
+        # ordering, but to_json from_json restores the order again. Investigate.
+        if isinstance(inputs, set) or isinstance(outputs, set):
+            warnings.warn("Using sets as inputs is discouraged as it leads to indeterministic behavior.")
+        if isinstance(inputs, (set, collections.abc.KeysView, collections.abc.Set)):
             inputs = {k: None for k in inputs}
-        if isinstance(outputs, (set, collections.abc.KeysView)):
+        if isinstance(outputs, (set, collections.abc.KeysView, collections.abc.Set)):
             outputs = {k: None for k in outputs}
 
         s = nd.NestedSDFG(

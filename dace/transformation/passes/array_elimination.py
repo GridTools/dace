@@ -32,7 +32,7 @@ class ArrayElimination(ppl.Pass):
         return modified & ppl.Modifies.AccessNodes
 
     def depends_on(self):
-        return {ap.StateReachability, ap.FindAccessStates}
+        return [ap.StateReachability, ap.FindAccessStates]
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
         """
@@ -67,6 +67,7 @@ class ArrayElimination(ppl.Pass):
 
             # Merge source and sink access nodes
             removed_nodes = self.merge_access_nodes(state, access_nodes, lambda n: state.in_degree(n) == 0)
+
             removed_nodes |= self.merge_access_nodes(state, access_nodes, lambda n: state.out_degree(n) == 0)
 
             # Remove redundant views

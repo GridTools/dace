@@ -5,6 +5,7 @@
 import ast
 from copy import deepcopy as dcpy
 from collections.abc import KeysView
+import contextvars
 import dace
 import itertools
 import dace.serialize
@@ -26,6 +27,34 @@ import warnings
 
 # -----------------------------------------------------------------------------
 
+# Global context variable to store the node ID counter
+_node_id_counter: contextvars.ContextVar[int] = contextvars.ContextVar('_node_id_counter', default=0)
+
+
+def _get_next_node_id() -> int:
+    """Get the next node ID and increment the counter."""
+    current = _node_id_counter.get()
+    _node_id_counter.set(current + 1)
+    return current
+
+
+# TODO: check if the edges need an id. If source and dest, are equal they should be interchangable right?
+
+class reset_node_id_counter:
+    """Context manager that resets the node ID counter to zero and restores the old value afterwards."""
+
+    def __init__(self):
+        self._old_value = None
+
+    def __enter__(self):
+        self._old_value = _node_id_counter.get()
+        _node_id_counter.set(0)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        _node_id_counter.set(self._old_value)
+        return False
+
 
 @make_properties
 class Node(object):
@@ -38,6 +67,7 @@ class Node(object):
                                   value_type=dtypes.typeclass,
                                   desc="A set of output connectors for this node.")
     guid = Property(dtype=str, allow_none=False)
+    id = Property(dtype=int, allow_none=False)
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type
@@ -50,6 +80,7 @@ class Node(object):
         self.out_connectors = out_connectors or {}
 
         self.guid = graph.generate_element_id(self)
+        self.id = _get_next_node_id()
 
     def __str__(self):
         if hasattr(self, 'label'):
@@ -62,9 +93,14 @@ class Node(object):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            if k == 'guid':  # Skip ID
+            if k == 'guid':  # Skip GUID
+                continue
+            if k == '_id':  # Skip ID, will be assigned new one
                 continue
             setattr(result, k, dcpy(v, memo))
+        # Assign new GUID and ID
+        result.guid = graph.generate_element_id(result)
+        result.id = _get_next_node_id()
         return result
 
     def validate(self, sdfg, state):
@@ -101,6 +137,7 @@ class Node(object):
             "type": typestr,
             "label": labelstr,
             "attributes": dace.serialize.all_properties_to_json(self),
+            # TODO(tehrengruber): This id looks very similar to the ID I introduced.
             "id": parent.node_id(self),
             "scope_entry": scope_entry_node,
             "scope_exit": scope_exit_node
@@ -312,6 +349,7 @@ class AccessNode(Node):
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
 
         node._guid = graph.generate_element_id(node)
+        node._id = _get_next_node_id()
 
         return node
 
@@ -644,10 +682,13 @@ class NestedSDFG(CodeNode):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            # Skip GUID.
-            if k in ('guid', ):
+            # Skip GUID and ID.
+            if k in ('guid', '_id'):
                 continue
             setattr(result, k, dcpy(v, memo))
+        # Assign new GUID and ID
+        result.guid = graph.generate_element_id(result)
+        result.id = _get_next_node_id()
         if result._sdfg is not None:
             result._sdfg.parent_nsdfg_node = result
         return result
