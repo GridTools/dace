@@ -1833,6 +1833,13 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id, scope_entry)
 
+        grid_dims_for_mi300a = []
+        for grid_dim in grid_dims:
+            grid_dim_expr = _topy(grid_dim)
+            grid_dims_for_mi300a.append(
+                f'((({grid_dim_expr}) == 1) ? 1 : static_cast<int>(((({grid_dim_expr}) + 5) / 6) * 6))')
+        grid_dims = grid_dims_for_mi300a
+
         gdims = 'dace_number_blocks, 1, 1' if is_persistent else ', '.join(_topy(grid_dims))
         bdims = ', '.join(_topy(block_dims))
 
@@ -1843,11 +1850,11 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             dimcheck = 'dace_number_blocks <= 0'
         else:
             single_dimchecks = []
-            for gdim in grid_dims:
-                # We only issue a check if we can known at code generation time, that
-                #  the size is positive we omit the test.
-                if (gdim > 0) != True:
-                    single_dimchecks.append(f'(({_topy(gdim)}) <= 0)')
+            # for gdim in grid_dims:
+            #     # We only issue a check if we can known at code generation time, that
+            #     #  the size is positive we omit the test.
+            #     if (gdim > 0) != True: # TODO(iomaganaris): Fix that for `gdim` being a string
+            #         single_dimchecks.append(f'(({_topy(gdim)}) <= 0)')
             dimcheck = ' || '.join(single_dimchecks)
 
         if dimcheck:
