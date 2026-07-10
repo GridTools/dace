@@ -13,7 +13,7 @@ from dace.sdfg import graph as gr, nodes as nd
 from dace.sdfg.state import ControlFlowRegion
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Type, Union
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple, Type, Union
 from dace.sdfg.validation import InvalidSDFGError
 from dace.transformation import transformation as xf, pass_pipeline as ppl
 from dace.utils import print_sdfg_hash
@@ -80,8 +80,8 @@ class PatternMatchAndApply(ppl.Pass):
         self.print_report = print_report
         self.progress = progress
 
-    def depends_on(self) -> List[Type[ppl.Pass]]:
-        return list(dict.fromkeys([p.depends_on() for p in self.transformations]))
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return ppl.unique_dependencies(self.transformations)
 
     def modifies(self) -> ppl.Modifies:
         result = ppl.Modifies.Nothing

@@ -86,8 +86,12 @@ class ControlFlowBlockReachability(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.CFG
 
-    def _region_closure(self, region: ControlFlowRegion,
-                        block_reach: Dict[int, Dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]]]) -> Set[SDFGState]:
+    def _region_closure(
+        self,
+        region: ControlFlowRegion,
+        block_reach: Dict[int, Dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]]],
+        cached_closures: dict[int, OrderedSet[ControlFlowBlock]],
+    ) -> Set[ControlFlowBlock]:
         closure: Set[SDFGState] = OrderedSet()
         if isinstance(region, LoopRegion):
             # Any point inside the loop may reach any other point inside the loop again.
@@ -104,7 +108,10 @@ class ControlFlowBlockReachability(ppl.Pass):
         # Walk up the parent tree.
         pivot = region.parent_graph
         while pivot and not isinstance(pivot, SDFG):
-            closure.update(self._region_closure(pivot, block_reach))
+            graph_id = id(pivot)
+            if graph_id not in cached_closures:
+                cached_closures[graph_id] = self._region_closure(pivot, block_reach, cached_closures)
+            closure.update(cached_closures[graph_id])
             pivot = pivot.parent_graph
         return closure
 
@@ -113,6 +120,8 @@ class ControlFlowBlockReachability(ppl.Pass):
         :return: For each control flow region, a dictionary mapping each control flow block to its other reachable
                  control flow blocks.
         """
+        top_sdfg.reset_cfg_list()
+
         single_level_reachable: Dict[int, Dict[ControlFlowBlock,
                                                OrderedSet[ControlFlowBlock]]] = defaultdict(lambda: defaultdict(set))
         for cfg in top_sdfg.all_control_flow_regions(recursive=True):
@@ -133,6 +142,7 @@ class ControlFlowBlockReachability(ppl.Pass):
             return single_level_reachable
 
         reachable: Dict[int, Dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]]] = {}
+        cached_closures: dict[int, OrderedSet[ControlFlowBlock]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             for cfg in sdfg.all_control_flow_regions():
                 result: Dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]] = defaultdict(OrderedSet)
@@ -142,7 +152,11 @@ class ControlFlowBlockReachability(ppl.Pass):
                             result[block].update(reached.all_control_flow_blocks())
                         result[block].add(reached)
                     if block.parent_graph is not sdfg:
-                        result[block].update(self._region_closure(block.parent_graph, single_level_reachable))
+                        graph_id = id(block.parent_graph)
+                        if graph_id not in cached_closures:
+                            cached_closures[graph_id] = self._region_closure(block.parent_graph, single_level_reachable,
+                                                                             cached_closures)
+                        result[block].update(cached_closures[graph_id])
                 reachable[cfg.cfg_id] = result
         return reachable
 
@@ -251,7 +265,7 @@ class AccessSets(ppl.Pass):
         if init_stmt:
             exprs.add(init_stmt)
         for expr in exprs:
-            readset |= symbolic.free_symbols_and_functions(expr) & arrays
+            readset |= (symbolic.free_symbols_and_functions(expr) | symbolic.arrays(expr)) & arrays
         return readset
 
     def apply_pass(self, top_sdfg: SDFG, _) -> Dict[ControlFlowBlock, Tuple[OrderedSet[str], OrderedSet[str]]]:
@@ -281,7 +295,8 @@ class AccessSets(ppl.Pass):
                     elif isinstance(block, ConditionalBlock):
                         for cond, _ in block.branches:
                             if cond is not None:
-                                readset |= symbolic.free_symbols_and_functions(cond.as_string) & arrays
+                                readset |= (symbolic.free_symbols_and_functions(cond.as_string)
+                                            | symbolic.arrays(cond.as_string)) & arrays
 
                 result[block] = (readset, writeset)
 
@@ -423,8 +438,9 @@ class FindAccessNodes(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.AccessNodes
 
-    def apply_pass(self, top_sdfg: SDFG,
-                   _) -> Dict[int, Dict[str, Dict[SDFGState, Tuple[OrderedSet[nd.AccessNode], OrderedSet[nd.AccessNode]]]]]:
+    def apply_pass(
+            self, top_sdfg: SDFG,
+            _) -> Dict[int, Dict[str, Dict[SDFGState, Tuple[OrderedSet[nd.AccessNode], OrderedSet[nd.AccessNode]]]]]:
         """
         :return: A dictionary mapping each data descriptor name to a dictionary keyed by states with all access nodes
                  that use that data descriptor.
@@ -432,8 +448,9 @@ class FindAccessNodes(ppl.Pass):
         top_result: Dict[int, Dict[str, OrderedSet[nd.AccessNode]]] = dict()
 
         for sdfg in top_sdfg.all_sdfgs_recursive():
-            result: Dict[str, Dict[SDFGState, Tuple[OrderedSet[nd.AccessNode], OrderedSet[nd.AccessNode]]]] = defaultdict(
-                lambda: defaultdict(lambda: [OrderedSet(), OrderedSet()]))
+            result: Dict[str, Dict[SDFGState,
+                                   Tuple[OrderedSet[nd.AccessNode], OrderedSet[nd.AccessNode]]]] = defaultdict(
+                                       lambda: defaultdict(lambda: [OrderedSet(), OrderedSet()]))
             for state in sdfg.states():
                 for anode in state.data_nodes():
                     if state.in_degree(anode) > 0:
@@ -501,10 +518,11 @@ class SymbolWriteScopes(ppl.ControlFlowRegionPass):
         idom = nx.immediate_dominators(region.nx, region.start_block)
         all_doms = cfg_analysis.all_dominators(region, idom)
 
-        b_reach: Dict[ControlFlowBlock,
-                      OrderedSet[ControlFlowBlock]] = pipeline_results[ControlFlowBlockReachability.__name__][region.cfg_id]
+        b_reach: Dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]] = pipeline_results[
+            ControlFlowBlockReachability.__name__][region.cfg_id]
         symbol_access_sets: Dict[Union[ControlFlowBlock, Edge[InterstateEdge]],
-                                 Tuple[OrderedSet[str], OrderedSet[str]]] = pipeline_results[SymbolAccessSets.__name__][region.cfg_id]
+                                 Tuple[OrderedSet[str],
+                                       OrderedSet[str]]] = pipeline_results[SymbolAccessSets.__name__][region.cfg_id]
 
         for read_loc, (reads, _) in symbol_access_sets.items():
             for sym in reads:
@@ -569,7 +587,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
                                desc: str,
                                block: ControlFlowBlock,
                                read: Union[nd.AccessNode, InterstateEdge],
-                               access_nodes: Dict[SDFGState, Tuple[OrderedSet[nd.AccessNode], OrderedSet[nd.AccessNode]]],
+                               access_nodes: Dict[SDFGState, Tuple[OrderedSet[nd.AccessNode],
+                                                                   OrderedSet[nd.AccessNode]]],
                                idom_dict: Dict[ControlFlowRegion, Dict[ControlFlowBlock, ControlFlowBlock]],
                                access_sets: Dict[ControlFlowBlock, Tuple[OrderedSet[str], OrderedSet[str]]],
                                no_self_shadowing: bool = False) -> Optional[Tuple[SDFGState, nd.AccessNode]]:
@@ -638,12 +657,14 @@ class ScalarWriteShadowScopes(ppl.Pass):
         """
         top_result: Dict[int, WriteScopeDict] = dict()
 
-        access_sets: Dict[ControlFlowBlock, Tuple[OrderedSet[str], OrderedSet[str]]] = pipeline_results[AccessSets.__name__]
+        access_sets: Dict[ControlFlowBlock, Tuple[OrderedSet[str],
+                                                  OrderedSet[str]]] = pipeline_results[AccessSets.__name__]
 
         for sdfg in top_sdfg.all_sdfgs_recursive():
             result: WriteScopeDict = defaultdict(lambda: defaultdict(lambda: OrderedSet()))
             idom_dict: Dict[ControlFlowRegion, Dict[ControlFlowBlock, ControlFlowBlock]] = {}
-            all_doms_transitive: Dict[ControlFlowBlock, OrderedSet[ControlFlowBlock]] = defaultdict(lambda: OrderedSet())
+            all_doms_transitive: Dict[ControlFlowBlock,
+                                      OrderedSet[ControlFlowBlock]] = defaultdict(lambda: OrderedSet())
             for cfg in sdfg.all_control_flow_regions():
                 if isinstance(cfg, ConditionalBlock):
                     idom_dict[cfg] = {b: b for _, b in cfg.branches}
@@ -659,8 +680,9 @@ class ScalarWriteShadowScopes(ppl.Pass):
                     all_doms_transitive[k].add(cfg)
                     all_doms_transitive[k].update(all_doms_transitive[cfg])
 
-            access_nodes: Dict[str, Dict[SDFGState, Tuple[OrderedSet[nd.AccessNode], OrderedSet[nd.AccessNode]]]] = pipeline_results[
-                FindAccessNodes.__name__][sdfg.cfg_id]
+            access_nodes: Dict[str, Dict[SDFGState, Tuple[OrderedSet[nd.AccessNode],
+                                                          OrderedSet[nd.AccessNode]]]] = pipeline_results[
+                                                              FindAccessNodes.__name__][sdfg.cfg_id]
 
             block_reach: Dict[ControlFlowBlock,
                               OrderedSet[ControlFlowBlock]] = pipeline_results[ControlFlowBlockReachability.__name__]
@@ -882,7 +904,8 @@ class DeriveSDFGConstraints(ppl.Pass):
                         invariants[ds].add(f'{ds} <= {self.assume_max_data_size}')
                     handled.add(ds)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Tuple[Dict[str, OrderedSet[str]], Dict[str, OrderedSet[str]], Dict[str, OrderedSet[str]]]:
+    def apply_pass(self, sdfg: SDFG,
+                   _) -> Tuple[Dict[str, OrderedSet[str]], Dict[str, OrderedSet[str]], Dict[str, OrderedSet[str]]]:
         invariants: Dict[str, OrderedSet[str]] = {}
         self._derive_parameter_datasize_constraints(sdfg, invariants)
         return {}, invariants, {}
@@ -1092,7 +1115,10 @@ class ConditionUniqueWrites(ppl.Pass):
                         if array_name not in access_write_branch:
                             access_write_branch[array_name] = {}
                         if wss not in access_write_branch[array_name]:
-                            access_write_branch[array_name][wss] = {"branches": OrderedSet(), "access_nodes": OrderedSet()}
+                            access_write_branch[array_name][wss] = {
+                                "branches": OrderedSet(),
+                                "access_nodes": OrderedSet()
+                            }
                         access_write_branch[array_name][wss]["branches"].add(br)
                         access_write_branch[array_name][wss]["access_nodes"].add(an)
 

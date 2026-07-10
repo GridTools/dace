@@ -64,11 +64,13 @@ def until(val, substr):
         return val
     return val[:val.find(substr)]
 
+
 def json_data_to_file(data, filename):
     import json
 
     with open(filename, "w") as f:
         json.dump(data, f, indent=2)
+
 
 def print_sdfg_hash(sdfg: "dace.SDFG", frame_index=1, info="") -> None:
     frame = inspect.stack()[frame_index]

@@ -15,6 +15,7 @@ from dace.transformation.passes import analysis as ap
 from dace.transformation.transformation import SingleStateTransformation
 from ordered_set import OrderedSet
 
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class ArrayElimination(ppl.Pass):
@@ -86,6 +87,8 @@ class ArrayElimination(ppl.Pass):
 
         # If node is completely removed from graph, erase data descriptor
         for aname, desc in list(sdfg.arrays.items()):
+            if isinstance(desc, data.DistributedDescriptor):
+                continue
             if not desc.transient or isinstance(desc, data.Scalar):
                 continue
             if aname not in access_sets or not access_sets[aname]:

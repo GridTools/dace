@@ -10,6 +10,7 @@ import dace.serialize
 from typing import Any, Callable, Generic, Iterable, List, Optional, Sequence, TypeVar, Union
 from ordered_set import OrderedSet
 
+
 class NodeNotFoundError(Exception):
     pass
 

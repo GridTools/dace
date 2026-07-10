@@ -8,8 +8,8 @@ from dace import data, dtypes, properties, subsets, symbolic, transformation
 from dace.sdfg import SDFG, SDFGState, graph, nodes, propagation
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
 from dace.sdfg.type_inference import infer_expr_type
-from dace.utils import print_sdfg_hash
 from ordered_set import OrderedSet
+
 
 @properties.make_properties
 class MapFusionVertical(transformation.SingleStateTransformation):
