@@ -143,7 +143,7 @@ class BlockGraphView(object):
         Iterate over all edges in this graph or subgraph.
         This includes dataflow edges, inter-state edges, and recursive edges within nested SDFGs. It returns tuples of
         the form (edge, parent), where the edge is either a dataflow edge, in which case the parent is an SDFG state, or
-        an inter-stte edge, in which case the parent is a control flow graph (i.e., an SDFG or a scope block).
+        an inter-state edge, in which case the parent is a control flow graph (i.e., an SDFG or a scope block).
         """
         return []
 
@@ -163,7 +163,7 @@ class BlockGraphView(object):
     @abc.abstractmethod
     def exit_node(self, entry_node: nd.EntryNode) -> Optional[nd.ExitNode]:
         """ Returns the exit node leaving the context opened by the given entry node. """
-        raise None
+        return None
 
     ###################################################################
     # Memlet-tracking methods
@@ -1762,9 +1762,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         debuginfo = _get_debug_info(debuginfo or self._default_lineinfo)
 
         # Make dictionary of autodetect connector types from set
-        if isinstance(inputs, (set, collections.abc.KeysView)):
+        if isinstance(inputs, set) or isinstance(outputs, set):
+            warnings.warn("Using sets as inputs is discouraged as it leads to indeterministic behavior.")
+        if isinstance(inputs, (set, collections.abc.KeysView, collections.abc.Set)):
             inputs = {k: None for k in inputs}
-        if isinstance(outputs, (set, collections.abc.KeysView)):
+        if isinstance(outputs, (set, collections.abc.KeysView, collections.abc.Set)):
             outputs = {k: None for k in outputs}
 
         tasklet = nd.Tasklet(
@@ -3634,23 +3636,26 @@ class LoopRegion(ControlFlowRegion):
             codes.append(self.update_statement)
         return codes
 
-    def get_meta_read_memlets(self, arrays: Optional[Dict[str, dt.Data]] = None) -> List[mm.Memlet]:
+    def get_meta_read_memlets(self,
+                              arrays: Optional[Dict[str, dt.Data]] = None,
+                              include_scalars: bool = False) -> List[mm.Memlet]:
         """
         Get a list of all (read) memlets in meta codeblocks.
 
         :param arrays: An optional dictionary mapping array names to their data descriptors.
             If not not given defaults to ``self.sdfg.arrays``.
+        :param include_scalars: If True, include Memlets for scalar accesses. Defaults to False to be backwards compatible.
         """
         # Avoid cyclic imports.
         from dace.sdfg.sdfg import memlets_in_ast
 
         arrays = arrays if arrays is not None else self.sdfg.arrays
 
-        read_memlets = memlets_in_ast(self.loop_condition.code[0], arrays)
+        read_memlets = memlets_in_ast(self.loop_condition.code[0], arrays, include_scalars=include_scalars)
         if self.init_statement:
-            read_memlets.extend(memlets_in_ast(self.init_statement.code[0], arrays))
+            read_memlets.extend(memlets_in_ast(self.init_statement.code[0], arrays, include_scalars=include_scalars))
         if self.update_statement:
-            read_memlets.extend(memlets_in_ast(self.update_statement.code[0], arrays))
+            read_memlets.extend(memlets_in_ast(self.update_statement.code[0], arrays, include_scalars=include_scalars))
         return read_memlets
 
     def replace_meta_accesses(self, replacements):
@@ -3908,13 +3913,25 @@ class ConditionalBlock(AbstractControlFlowRegion):
                 codes.append(c)
         return codes
 
-    def get_meta_read_memlets(self) -> List[mm.Memlet]:
+    def get_meta_read_memlets(self,
+                              arrays: Optional[Dict[str, dt.Data]] = None,
+                              include_scalars: bool = False) -> List[mm.Memlet]:
+        """
+        Get a list of all (read) memlets in meta codeblocks.
+
+        :param arrays: An optional dictionary mapping array names to their data descriptors.
+            If not not given defaults to ``self.sdfg.arrays``.
+        :param include_scalars: If True, include Memlets for scalar accesses. Defaults to False to be backwards compatible.
+        """
         # Avoid cyclic imports.
         from dace.sdfg.sdfg import memlets_in_ast
+
+        arrays = arrays if arrays is not None else self.sdfg.arrays
+
         read_memlets = []
         for c, _ in self.branches:
             if c is not None:
-                read_memlets.extend(memlets_in_ast(c.code[0], self.sdfg.arrays))
+                read_memlets.extend(memlets_in_ast(c.code[0], arrays, include_scalars=include_scalars))
         return read_memlets
 
     def propagate_memlets(self, border_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]]) -> None:
