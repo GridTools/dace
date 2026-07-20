@@ -8,6 +8,7 @@ import networkx as nx
 from dace.dtypes import deduplicate
 import dace.serialize
 from typing import Any, Callable, Generic, Iterable, List, Optional, Sequence, TypeVar, Union
+from ordered_set import OrderedSet
 
 
 class NodeNotFoundError(Exception):
@@ -30,6 +31,9 @@ class Edge(Generic[T]):
         self._src = src
         self._dst = dst
         self._data: T = data
+
+    def id(self):
+        return (self._src.id, self._dst.id)
 
     @property
     def src(self):
@@ -215,7 +219,7 @@ class Graph(Generic[NodeT, EdgeT]):
 
     def all_edges(self, *nodes: NodeT) -> Iterable[Edge[EdgeT]]:
         """Returns an iterable to incoming and outgoing Edge objects."""
-        result = set()
+        result = OrderedSet()
         for node in nodes:
             result.update(self.in_edges(node))
             result.update(self.out_edges(node))

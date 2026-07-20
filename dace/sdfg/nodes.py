@@ -5,26 +5,55 @@
 import ast
 from copy import deepcopy as dcpy
 from collections.abc import KeysView
+import contextvars
 import dace
 import itertools
 import dace.serialize
+import sympy as sp
 from typing import Any, Dict, Optional, Set, Union
 from dace.config import Config
 from dace.sdfg import graph
-from dace.frontend.python.astutils import unparse, rname
-from dace.properties import (EnumProperty, Property, CodeProperty, LambdaProperty, RangeProperty, DebugInfoProperty,
-                             SetProperty, make_properties, indirect_properties, DataProperty, SymbolicProperty,
-                             ListProperty, SDFGReferenceProperty, DictProperty, LibraryImplementationProperty,
-                             CodeBlock)
-from dace.frontend.operations import detect_reduction_type
+from dace.frontend.python.astutils import rname
+from dace.properties import (EnumProperty, Property, CodeProperty, RangeProperty, DebugInfoProperty, SetProperty,
+                             make_properties, indirect_properties, DataProperty, SymbolicProperty, ListProperty,
+                             SDFGReferenceProperty, DictProperty, LibraryImplementationProperty, CodeBlock)
 from dace.symbolic import issymbolic, pystr_to_symbolic
-from dace import data, subsets as sbs, dtypes
+from dace import subsets as sbs, dtypes
 from dace.sdfg import tasklet_validation as tval
 from dace.sdfg.type_inference import infer_types, infer_expr_type
 import pydoc
 import warnings
 
 # -----------------------------------------------------------------------------
+
+# Global context variable to store the node ID counter
+_node_id_counter: contextvars.ContextVar[int] = contextvars.ContextVar('_node_id_counter', default=0)
+
+
+def _get_next_node_id() -> int:
+    """Get the next node ID and increment the counter."""
+    current = _node_id_counter.get()
+    _node_id_counter.set(current + 1)
+    return current
+
+
+# TODO: check if the edges need an id. If source and dest, are equal they should be interchangable right?
+
+
+class reset_node_id_counter:
+    """Context manager that resets the node ID counter to zero and restores the old value afterwards."""
+
+    def __init__(self):
+        self._old_value = None
+
+    def __enter__(self):
+        self._old_value = _node_id_counter.get()
+        _node_id_counter.set(0)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        _node_id_counter.set(self._old_value)
+        return False
 
 
 @make_properties
@@ -38,6 +67,7 @@ class Node(object):
                                   value_type=dtypes.typeclass,
                                   desc="A set of output connectors for this node.")
     guid = Property(dtype=str, allow_none=False)
+    id = Property(dtype=int, allow_none=False)
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type
@@ -50,6 +80,7 @@ class Node(object):
         self.out_connectors = out_connectors or {}
 
         self.guid = graph.generate_element_id(self)
+        self.id = _get_next_node_id()
 
     def __str__(self):
         if hasattr(self, 'label'):
@@ -62,9 +93,14 @@ class Node(object):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            if k == 'guid':  # Skip ID
+            if k == 'guid':  # Skip GUID
+                continue
+            if k == '_id':  # Skip ID, will be assigned new one
                 continue
             setattr(result, k, dcpy(v, memo))
+        # Assign new GUID and ID
+        result.guid = graph.generate_element_id(result)
+        result.id = _get_next_node_id()
         return result
 
     def validate(self, sdfg, state):
@@ -101,6 +137,7 @@ class Node(object):
             "type": typestr,
             "label": labelstr,
             "attributes": dace.serialize.all_properties_to_json(self),
+            # TODO(tehrengruber): This id looks very similar to the ID I introduced.
             "id": parent.node_id(self),
             "scope_entry": scope_entry_node,
             "scope_exit": scope_exit_node
@@ -277,7 +314,7 @@ class AccessNode(Node):
     """ A node that accesses data in the SDFG. Denoted by a circular shape. """
 
     setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
     data = DataProperty(desc="Data (array, stream, scalar) to access")
 
     instrument = EnumProperty(dtype=dtypes.DataInstrumentationType,
@@ -312,6 +349,7 @@ class AccessNode(Node):
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
 
         node._guid = graph.generate_element_id(node)
+        node._id = _get_next_node_id()
 
         return node
 
@@ -399,7 +437,7 @@ class Tasklet(CodeNode):
                              default=CodeBlock("", dtypes.Language.CPP))
     code_exit = CodeProperty(desc="Extra code that is called on DaCe runtime cleanup",
                              default=CodeBlock("", dtypes.Language.CPP))
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
@@ -598,10 +636,10 @@ class NestedSDFG(CodeNode):
                              allow_none=True,
                              desc='Path to a file containing the SDFG for this nested SDFG')
     symbol_mapping = DictProperty(key_type=str,
-                                  value_type=dace.symbolic.pystr_to_symbolic,
+                                  value_type=sp.Basic,
                                   desc="Mapping between internal symbols and their values, expressed as "
                                   "symbolic expressions")
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
@@ -644,10 +682,13 @@ class NestedSDFG(CodeNode):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            # Skip GUID.
-            if k in ('guid', ):
+            # Skip GUID and ID.
+            if k in ('guid', '_id'):
                 continue
             setattr(result, k, dcpy(v, memo))
+        # Assign new GUID and ID
+        result.guid = graph.generate_element_id(result)
+        result.id = _get_next_node_id()
         if result._sdfg is not None:
             result._sdfg.parent_nsdfg_node = result
         return result
@@ -1008,7 +1049,7 @@ class Map(object):
                              desc="How much iterations should be unrolled."
                              " To prevent unrolling, set this value to 1.")
     collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
@@ -1040,6 +1081,11 @@ class Map(object):
                                  "enables the statement if block size is not symbolic, and any other value "
                                  "(including tuples) sets it explicitly.",
                                  serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+
+    gpu_min_warps_per_eu = Property(dtype=int,
+                                    default=0,
+                                    desc="Minimum number of warps per execution unit for GPU kernel",
+                                    serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
     gpu_maxnreg = Property(dtype=int,
                            default=0,
@@ -1094,10 +1140,17 @@ class Map(object):
             warnings.warn(f'The iteration range of Map {self.label} is {self.range}, which contains a zero'
                           ' or negative sized range, which is allowed but not recommended.'
                           ' The Map will be turned into a no-ops.')
-        if any((inc <= 0) == True for (_, _, inc) in self.range):
-            # Should this be turned into an error?
-            warnings.warn(f'An increment of Map {self.label} was negative, which is allowerd'
-                          ' but probably not useful.')
+        # A Map is an unordered, ascending iteration domain; the backends
+        # emit an ascending loop, so a negative step has no valid lowering.
+        # An empty positive-step range iterates zero times and is left to
+        # the size warning above. A symbolic step is checked at runtime by
+        # an assertion in the generated (debug) code.
+        for (_, _, inc) in self.range:
+            if (inc < 0) == True:
+                raise ValueError(f'Map {self.label} has a negative step ({inc}) in range '
+                                 f'{self.range}. Maps must use a positive step; rewrite the '
+                                 'iteration ascending (canonicalization normalizes loops to a '
+                                 'positive unit step).')
 
     def get_param_num(self):
         """ Returns the number of map dimension parameters/symbols. """
@@ -1260,7 +1313,7 @@ class Consume(object):
     condition = CodeProperty(desc="Quiescence condition", allow_none=True, default=None)
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Consume schedule", default=dtypes.ScheduleType.Default)
     chunksize = Property(dtype=int, desc="Maximal size of elements to consume at a time", default=1)
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
@@ -1330,7 +1383,7 @@ class LibraryNode(CodeNode):
                             desc="If set, determines the default device mapping of "
                             "the node upon expansion, if expanded to a nested SDFG.",
                             default=dtypes.ScheduleType.Default)
-    debuginfo = DebugInfoProperty()
+    debuginfo = DebugInfoProperty(allow_none=True)
 
     def __init__(self, name, *args, schedule=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1377,15 +1430,17 @@ class LibraryNode(CodeNode):
             node.
 
             This method supports two interfaces:
-            1. New interface: expand(state, implementation=None, **kwargs)
-            2. Old interface: expand(sdfg, state, **kwargs) [for backward compatibility]
+
+                1. New interface: ``expand(state, implementation=None, **kwargs)``
+                2. Old interface: ``expand(sdfg, state, **kwargs)`` [for backward compatibility]
 
             :param state_or_sdfg: Either a ControlFlowBlock (new interface) or SDFG (old interface)
             :param state_or_impl: Either implementation name (new interface) or SDFGState (old interface)
             :param kwargs: Additional expansion arguments
             :return: the name of the expanded implementation
 
-            Examples:
+            Examples::
+
                 # New interface (recommended):
                 result = node.expand(state, 'pure')
 
