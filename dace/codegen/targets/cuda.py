@@ -1211,13 +1211,15 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         ["(__copyidx{} * ({}))".format(d, sym2cpp(s)) for d, s in enumerate(src_strides[:-2])])
                     current_dst_expr = dst_expr + " + " + "+ ".join(
                         ["(__copyidx{} * ({}))".format(d, sym2cpp(s)) for d, s in enumerate(dst_strides[:-2])])
+                    kind_of_copy = '%sMemcpy%sTo%s' % (self.backend, src_location, dst_location)
+                    kind_of_copy = kind_of_copy if kind_of_copy != "hipMemcpyDeviceToDevice" else "hipMemcpyDefault"
                     callsite_stream.write(
-                        'DACE_GPU_CHECK(%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s));\n' %
+                        'DACE_GPU_CHECK(%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %s, %s));\n' %
                         (self.backend, current_dst_expr,
                          _topy(dst_strides[-2]) + ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype, current_src_expr,
                          sym2cpp(src_strides[-2]) + ' * sizeof(%s)' % src_node.desc(sdfg).dtype.ctype,
                          sym2cpp(copy_shape[-1]) + ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
-                         sym2cpp(copy_shape[-2]), self.backend, src_location, dst_location, cudastream), cfg, state_id,
+                         sym2cpp(copy_shape[-2]), kind_of_copy, cudastream), cfg, state_id,
                         [src_node, dst_node])
                     # Write for-loop footers
                     for d in range(dims - 2):
@@ -1266,6 +1268,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             elif dims == 1 and not is_c_order:
                 # This is the case that generated for expressions such as `A[::3]`, we reduce it
                 # to a 2D copy.
+                kind_of_copy = f'{self.backend}Memcpy{src_location}To{dst_location}'
+                kind_of_copy = kind_of_copy if kind_of_copy != "hipMemcpyDeviceToDevice" else "hipMemcpyDefault"
                 callsite_stream.write(
                     'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst}, {dst_stride}, {src}, {src_stride}, {width}, {height}, {kind}, {stream}));\n'
                     .format(
@@ -1276,7 +1280,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         src_stride=f'({sym2cpp(src_strides[0])}) * sizeof({src_node.desc(sdfg).dtype.ctype})',
                         width=f'sizeof({dst_node.desc(sdfg).dtype.ctype})',
                         height=sym2cpp(copy_shape[0]),
-                        kind=f'{self.backend}Memcpy{src_location}To{dst_location}',
+                        kind=kind_of_copy,
                         stream=cudastream,
                     ),
                     cfg,
@@ -1286,6 +1290,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             elif dims == 2 and is_c_order:
                 # Copying a 2D array that are in C order, i.e. last stride is 1.
+                kind_of_copy = f'{self.backend}Memcpy{src_location}To{dst_location}'
+                kind_of_copy = kind_of_copy if kind_of_copy != "hipMemcpyDeviceToDevice" else "hipMemcpyDefault"
                 callsite_stream.write(
                     'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst}, {dst_stride}, {src}, {src_stride}, {width}, {height}, {kind}, {stream}));\n'
                     .format(
@@ -1296,7 +1302,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         src_stride=f'({sym2cpp(src_strides[0])}) * sizeof({src_node.desc(sdfg).dtype.ctype})',
                         width=f'({sym2cpp(copy_shape[1])}) * sizeof({dst_node.desc(sdfg).dtype.ctype})',
                         height=sym2cpp(copy_shape[0]),
-                        kind=f'{self.backend}Memcpy{src_location}To{dst_location}',
+                        kind=kind_of_copy,
                         stream=cudastream,
                     ),
                     cfg,
@@ -1307,6 +1313,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 # Copying a 2D array into a 2D array that is in FORTRAN order, i.e. first stride
                 # is one. The CUDA API can not handle such cases directly, however, by "transposing"
                 # it is possible to use `Memcpy2DAsync`.
+                kind_of_copy = f'{self.backend}Memcpy{src_location}To{dst_location}'
+                kind_of_copy = kind_of_copy if kind_of_copy != "hipMemcpyDeviceToDevice" else "hipMemcpyDefault"
                 callsite_stream.write(
                     'DACE_GPU_CHECK({backend}Memcpy2DAsync({dst}, {dst_stride}, {src}, {src_stride}, {width}, {height}, {kind}, {stream}));\n'
                     .format(
@@ -1317,7 +1325,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         src_stride=f'({sym2cpp(src_strides[1])}) * sizeof({src_node.desc(sdfg).dtype.ctype})',
                         width=f'({sym2cpp(copy_shape[0])}) * sizeof({dst_node.desc(sdfg).dtype.ctype})',
                         height=sym2cpp(copy_shape[1]),
-                        kind=f'{self.backend}Memcpy{src_location}To{dst_location}',
+                        kind=kind_of_copy,
                         stream=cudastream,
                     ),
                     cfg,
