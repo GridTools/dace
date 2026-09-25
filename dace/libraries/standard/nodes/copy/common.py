@@ -279,7 +279,8 @@ def _memcpy_kind(inp: data.Data, out: data.Data) -> str:
     src_loc = "Device" if inp.storage == dace.dtypes.StorageType.GPU_Global else "Host"
     dst_loc = "Device" if out.storage == dace.dtypes.StorageType.GPU_Global else "Host"
     backend = get_gpu_backend()
-    return f"{backend}Memcpy{src_loc}To{dst_loc}"
+    kind_of_copy = f"{backend}Memcpy{src_loc}To{dst_loc}"
+    return kind_of_copy if kind_of_copy != "hipMemcpyDeviceToDevice" else "hipMemcpyDefault"
 
 
 def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, *, cuda: bool) -> nodes.Tasklet:
